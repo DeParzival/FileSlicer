@@ -4,7 +4,7 @@ import multer from "multer";
 import fs from "fs";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
-import { mergeChunks, uploadChunk } from "./fileController.js";
+import { downloadFile, finalizeUpload, uploadChunk } from "./fileController.js";
 
 dotenv.config();
 
@@ -41,7 +41,8 @@ const upload = multer({storage});
 
 // Routes
 app.post("/upload-chunk", upload.single('chunk'), uploadChunk);
-app.post("/merge-chunk", mergeChunks);
+app.post("/finalize-upload", finalizeUpload);
+app.get("/download/:trackingId", downloadFile);
 
 
 app.listen(port, ()=>{

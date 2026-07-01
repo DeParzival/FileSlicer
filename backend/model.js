@@ -2,9 +2,10 @@ import mongoose from "mongoose";
 
 // Blueprint for the master file
 const FileSchema = new mongoose.Schema({
-    originalName:String,
+    fileName:String,
     fileHash:String,  // A uniue id
     totalChunks:Number,
+    status:String,
     createdAt:{
         type:Date,
         default:Date.now

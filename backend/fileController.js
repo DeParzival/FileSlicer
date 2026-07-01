@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 import { ChunkMeta, FileMeta } from "./model.js";
 
 
@@ -23,45 +24,80 @@ export const uploadChunk = async (req, res) => {
     }
 };
 
-
-// Gluing back the chunks
-export const mergeChunks = async (req, res) => {
-    const {fileHash, fileName, totalChunks}= req.body;
-
+// checks the db to confirm all the pieces arrived, after confirming, it hands the user their unique tracking ID
+export const finalizeUpload = async (req, res) => {
     try {
-        // Find all pieces belonging to the file in order
-        const chunks = await ChunkMeta.find({fileHash}).sort({chunkOrder:1});
+        const {fileHash, fileName, totalChunks} = req.body;
 
-        if(chunks.length!=Number(totalChunks))
-            return res.status(400).send({message: "Missing chunks"});
+        // log the file configuration in db
+        const newFile = await FileMeta.create({
+            fileHash,
+            fileName,
+            totalChunks: Number(totalChunks),
+            status: 'Ready for on-demand assembly'
+        });
 
-        const filePath = `./uploads/${fileName}`;
-
-        // Wipes any old duplicate files
-        if(fs.existsSync(filePath))
-            fs.unlinkSync(filePath);
-
-        // Stitching the pieces back together
-        for(const chunk of chunks){
-            const chunkBuffer = fs.readFileSync(chunk.storagePath);
-            fs.appendFileSync(filePath, chunkBuffer);
-
-            fs.unlinkSync(chunk.storagePath);
-        }
-
-        // Add it to the master ledger
-        await FileMeta.create({originalName:fileName, fileHash, totalChunks: Number(totalChunks)});
-
-        // delete the chunks
-        await ChunkMeta.deleteMany({fileHash});
-
-        console.log(`Success! File securely merged into: ${fileName}`);
-        res.status(200).send({message: "File reassembled", filePath: filePath});
+        // handing back the fileHash as the unique tracking ID
+        res.status(201).json({
+            message:"All pieces stashed successfully",
+            trackingId:newFile.fileHash
+        });
 
     } catch (error) {
-        console.log("Error during merging process: ", error);
-        res.status(500).send({message:"Failed to merge chunks"});
-        
+        res.status(500).send({message:"Failed to finalize upload: ", error});
     }
+}
 
+// the merge engine
+export const downloadFile = async (req, res) => {
+    try {
+        const {trackingId} = req.params;
+
+        // Look up the file
+        const fileRecord = await FileMeta.findOne({fileHash:trackingId});
+        if(!fileRecord)
+            return res.status(400).json({message:"Invalid tracking Id. File not found"});
+
+        // Find all pieces belonging to the file in order
+        const chunks = await ChunkMeta.find({fileHash:trackingId}).sort({chunkOrder:1});
+
+        if(chunks.length!=Number(fileRecord.totalChunks))
+            return res.status(400).send({message: "Missing chunks"});
+
+        for (let i = 0; i < chunks.length; i++) {
+        if (chunks[i].chunkOrder !== i) {
+            return res.status(400).json({ 
+                message: `File compilation aborted: Expected chunk index ${i}, but found ${chunks[i].chunkOrder}. Your pieces are corrupted.` 
+            });
+        }
+}
+
+        // temporary location to stitch the files together
+        const tempMergedPath = path.resolve('uploads', `TEMP-${fileRecord._id}.tmp`);
+
+        // Wipes any old duplicate files
+        if(fs.existsSync(tempMergedPath))
+            fs.unlinkSync(tempMergedPath);
+
+        // Stitching the pieces back together
+        for (const chunk of chunks) {
+            const chunkData = fs.readFileSync(chunk.storagePath);
+            fs.appendFileSync(tempMergedPath, chunkData);
+        }
+
+        res.download(tempMergedPath, fileRecord.fileName, { dotfiles: 'allow' }, (err) => {
+
+            if(err)
+                console.error("Download streaming failed:", err);
+                
+
+            if (fs.existsSync(tempMergedPath)) {
+                fs.unlinkSync(tempMergedPath);
+                console.log(`Temp workspace cleaned. Permanent chunks retained for ID: ${trackingId}`);
+            }
+        })
+
+    } catch (error) {
+        res.status(500).json({message:"Assembly failed", error:error.message});
+    }
 }
