@@ -16,7 +16,8 @@ const FileSchema = new mongoose.Schema({
 const ChunkSchema= new mongoose.Schema({
     fileHash:String, // which master file it belongs to
     chunkOrder:Number,
-    storagePath:String
+    telegramFieldId:String, // stores the id telegram gives us
+    messageId:Number, // the exact message in the channel
 });
 
 export const FileMeta = mongoose.model('FileMeta', FileSchema);

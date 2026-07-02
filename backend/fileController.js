@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { ChunkMeta, FileMeta } from "./model.js";
+import {uploadToTelegram, downloadFromTelegram} from "./telegramService.js"
 
 
 // Handles saving chunk details to the database ledger
@@ -9,14 +10,20 @@ export const uploadChunk = async (req, res) => {
         const {fileHash, chunkOrder} = req.body;
         const storagePath = req.file.path;  
 
+        // send the file straight to telegram
+        const telegramFieldId = await uploadToTelegram(storagePath);
+
+        // save the telegram id to the database ledger
         await ChunkMeta.create({
             fileHash:fileHash,
             chunkOrder: Number(chunkOrder),
-            storagePath:storagePath
+            telegramFieldId:telegramFieldId
         });
 
-        console.log(`Chunk ${chunkOrder} for file ${fileHash} saved to disk and database`);
-        res.status(200).send({message:"Chunk saved successfully"});
+        fs.unlinkSync(storagePath);
+
+        console.log(`Chunk ${chunkOrder} for file ${fileHash} relayed to Telegram & local file deleted.`);
+        res.status(200).send({ message: "Chunk saved to cloud successfully" });
 
     } catch (error) {
         console.error("Error saving chunk:", error);
@@ -64,33 +71,45 @@ export const downloadFile = async (req, res) => {
         if(chunks.length!=Number(fileRecord.totalChunks))
             return res.status(400).send({message: "Missing chunks"});
 
-        for (let i = 0; i < chunks.length; i++) {
-        if (chunks[i].chunkOrder !== i) {
-            return res.status(400).json({ 
-                message: `File compilation aborted: Expected chunk index ${i}, but found ${chunks[i].chunkOrder}. Your pieces are corrupted.` 
-            });
-        }
-}
-
+        // Generate a unique workspace to prevent download collisions
+        const uniqueId = Date.now() + '-' + Math.round(Math.random() * 1E9);
         // temporary location to stitch the files together
-        const tempMergedPath = path.resolve('uploads', `TEMP-${fileRecord._id}.tmp`);
+        const tempMergedPath = path.join('uploads', `TEMP-${uniqueId}-${fileRecord.originalName}`);
+
+        for (let i = 0; i < chunks.length; i++) {
+            if (chunks[i].chunkOrder !== i) {
+                return res.status(400).json({ 
+                    message: `File compilation aborted: Expected chunk index ${i}, but found ${chunks[i].chunkOrder}. Your pieces are corrupted.` 
+                });
+            }
+        }
 
         // Wipes any old duplicate files
         if(fs.existsSync(tempMergedPath))
             fs.unlinkSync(tempMergedPath);
 
-        // Stitching the pieces back together
+        // fetch from telegram and stitch
         for (const chunk of chunks) {
-            const chunkData = fs.readFileSync(chunk.storagePath);
+            // temporary holding spot
+            const tempChunkPath = path.join('uploads', `TEMP-CHUNK-${uniqueId}-${chunk.chunkOrder}.part`);
+
+            // download the specific chunk from telegram
+            await downloadFromTelegram(chunk.telegramFieldId, tempChunkPath);
+
+            // append it to the master file
+            const chunkData = fs.readFileSync(tempChunkPath);
             fs.appendFileSync(tempMergedPath, chunkData);
+
+            // delete the temporary downloaded chunk
+            fs.unlinkSync(tempChunkPath);
         }
 
+        // deliver the fully assembled file to the user
         res.download(tempMergedPath, fileRecord.fileName, { dotfiles: 'allow' }, (err) => {
-
             if(err)
                 console.error("Download streaming failed:", err);
-                
 
+            // clean up the master file after download finishes
             if (fs.existsSync(tempMergedPath)) {
                 fs.unlinkSync(tempMergedPath);
                 console.log(`Temp workspace cleaned. Permanent chunks retained for ID: ${trackingId}`);
