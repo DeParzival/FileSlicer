@@ -24,7 +24,7 @@ export function useVault(){
 
         setUploading(true);
 
-        const CHUNK_SIZE=1024*1024 // 1MB
+        const CHUNK_SIZE = 19*1024*1024 // 19MB
         const totalChunks = Math.ceil(file.size/CHUNK_SIZE);
     
 
