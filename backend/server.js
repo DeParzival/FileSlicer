@@ -9,7 +9,7 @@ import { downloadFile, finalizeUpload, uploadChunk } from "./fileController.js";
 dotenv.config();
 
 const app=express();
-const port=5000;
+
 
 // Middlewares
 app.use(cors());
@@ -45,6 +45,6 @@ app.post("/finalize-upload", finalizeUpload);
 app.get("/download/:trackingId", downloadFile);
 
 
-app.listen(port, ()=>{
-    console.log(`Server running on port: ${port}`)
+app.listen(process.env.PORT, ()=>{
+    console.log(`Server running on port: ${process.env.PORT}`)
 })
